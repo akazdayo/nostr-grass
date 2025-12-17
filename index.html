@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nostr Grass Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+
+        /* カスタムスクロールバー */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0d1117; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #30363d; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #8b949e; 
+        }
+
+        /* ツールチップ */
+        .day-cell {
+            position: relative;
+        }
+        .day-cell:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #6e7681;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            z-index: 10;
+            pointer-events: none;
+            margin-bottom: 5px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        /* グリッドレイアウト */
+        .grass-grid {
+            display: grid;
+            grid-template-rows: repeat(7, 12px);
+            grid-auto-flow: column;
+            gap: 3px;
+            width: max-content;
+        }
+
+        /* 色定義 (GitHub Dark Mode風) */
+        .level-0 { background-color: #161b22; }
+        .level-1 { background-color: #0e4429; }
+        .level-2 { background-color: #006d32; }
+        .level-3 { background-color: #26a641; }
+        .level-4 { background-color: #39d353; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="w-full max-w-4xl bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl p-6 md:p-8">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-white mb-2">Nostr Activity Grass</h1>
+            <p class="text-gray-400 text-sm">Nostrでの活動（投稿、リポスト、リアクション）を可視化します</p>
+        </div>
+
+        <!-- Input Section -->
+        <div class="flex flex-col md:flex-row gap-3 mb-8">
+            <input type="text" id="npubInput" placeholder="npub1..." 
+                class="flex-1 bg-[#0d1117] border border-[#30363d] text-white px-4 py-2 rounded focus:outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff] transition-colors"
+            >
+            <button id="generateBtn" 
+                class="bg-[#238636] hover:bg-[#2ea043] text-white font-semibold px-6 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                <span>生成する</span>
+                <svg id="loadingIcon" class="hidden animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Profile Info (Hidden initially) -->
+        <div id="profileSection" class="hidden mb-6 flex items-center gap-4 p-4 bg-[#0d1117] rounded-lg border border-[#30363d]">
+            <img id="profileImage" src="" alt="Profile" class="w-12 h-12 rounded-full bg-gray-700 object-cover">
+            <div>
+                <h2 id="profileName" class="text-lg font-bold text-white"></h2>
+                <p id="profileNpub" class="text-xs text-gray-400 font-mono"></p>
+            </div>
+            <div class="ml-auto text-right">
+                <p class="text-xs text-gray-400">Total Events (Last Year)</p>
+                <p id="totalCount" class="text-xl font-bold text-[#39d353]">0</p>
+            </div>
+        </div>
+
+        <!-- Grass Graph Container -->
+        <div class="w-full overflow-x-auto pb-4 custom-scrollbar">
+            <div id="grassContainer" class="flex flex-col min-w-max">
+                <!-- 曜日ラベルとグリッドのラッパー -->
+                <div class="flex gap-2">
+                    <!-- 曜日ラベル -->
+                    <div class="flex flex-col justify-between py-[2px] text-xs text-gray-500 h-[102px]">
+                        <span>Sun</span>
+                        <span></span>
+                        <span>Tue</span>
+                        <span></span>
+                        <span>Thu</span>
+                        <span></span>
+                        <span>Sat</span>
+                    </div>
+                    <!-- グリッド -->
+                    <div id="grid" class="grass-grid"></div>
+                </div>
+                <!-- 月ラベル -->
+                <div id="monthLabels" class="flex text-xs text-gray-500 mt-2 pl-8 relative h-4 w-full"></div>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="flex items-center justify-end gap-2 mt-4 text-xs text-gray-400">
+            <span>Less</span>
+            <div class="w-3 h-3 bg-[#161b22] rounded-[2px]"></div>
+            <div class="w-3 h-3 bg-[#0e4429] rounded-[2px]"></div>
+            <div class="w-3 h-3 bg-[#006d32] rounded-[2px]"></div>
+            <div class="w-3 h-3 bg-[#26a641] rounded-[2px]"></div>
+            <div class="w-3 h-3 bg-[#39d353] rounded-[2px]"></div>
+            <span>More</span>
+        </div>
+        
+        <!-- Status Message -->
+        <div id="statusMessage" class="mt-4 text-center text-sm text-gray-400 h-6"></div>
+    </div>
+
+    <!-- Script: Type module for importing libraries -->
+    <script type="module">
+        import { nip19, SimplePool } from 'https://esm.sh/nostr-tools@2.7.0';
+
+        const RELAYS = [
+            'wss://relay.damus.io',
+            'wss://relay-jp.nostr.wirednet.jp',
+            'wss://nos.lol',
+            'wss://relay.nostr.band',
+            'wss://yabu.me',
+            'wss://relay-jp.shino3.net'
+        ];
+
+        const pool = new SimplePool();
+        
+        const npubInput = document.getElementById('npubInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const loadingIcon = document.getElementById('loadingIcon');
+        const grid = document.getElementById('grid');
+        const statusMessage = document.getElementById('statusMessage');
+        const profileSection = document.getElementById('profileSection');
+        const profileImage = document.getElementById('profileImage');
+        const profileName = document.getElementById('profileName');
+        const profileNpub = document.getElementById('profileNpub');
+        const totalCountDisplay = document.getElementById('totalCount');
+        const monthLabels = document.getElementById('monthLabels');
+
+        // Helper: Convert Date to YYYY-MM-DD (Local Time)
+        // 以前の toISOString() はUTC基準で日付がずれることがあったため、ローカル時間を基準にする
+        const formatDate = (date) => {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        // Helper: Add days to a date
+        const addDays = (date, days) => {
+            const result = new Date(date);
+            result.setDate(result.getDate() + days);
+            return result;
+        };
+
+        // Helper: Generate date range for the last 52 weeks + remainder
+        const generateDateMap = () => {
+            const today = new Date();
+            const endDate = today;
+            
+            // Generate data for exactly 365 days
+            const startDate = new Date(endDate);
+            startDate.setDate(startDate.getDate() - 365);
+            
+            // Adjust start date to previous Sunday to align grid
+            while(startDate.getDay() !== 0) {
+                startDate.setDate(startDate.getDate() - 1);
+            }
+
+            const map = new Map();
+            const dates = [];
+            
+            let current = new Date(startDate);
+            // endDate の日も含めるためループ条件を調整
+            while (current <= endDate) {
+                const dateStr = formatDate(current);
+                map.set(dateStr, 0);
+                dates.push(dateStr);
+                current = addDays(current, 1);
+            }
+            
+            return { map, dates, startDate };
+        };
+
+        const renderGrid = (activityMap, dateList) => {
+            grid.innerHTML = '';
+            monthLabels.innerHTML = '';
+            
+            let maxActivity = 0;
+            activityMap.forEach(v => {
+                if(v > maxActivity) maxActivity = v;
+            });
+
+            // Thresholds
+            const getLevel = (count) => {
+                if (count === 0) return 0;
+                if (maxActivity < 5) return 1; 
+                
+                const q1 = Math.max(1, Math.floor(maxActivity * 0.25));
+                const q2 = Math.max(2, Math.floor(maxActivity * 0.5));
+                const q3 = Math.max(3, Math.floor(maxActivity * 0.75));
+                
+                if (count <= q1) return 1;
+                if (count <= q2) return 2;
+                if (count <= q3) return 3;
+                return 4;
+            };
+
+            dateList.forEach(dateStr => {
+                const count = activityMap.get(dateStr) || 0; // mapにない日付（未来など）は0
+                const level = getLevel(count);
+                
+                const cell = document.createElement('div');
+                cell.className = `w-[10px] h-[10px] rounded-[2px] level-${level} day-cell transition-colors duration-200`;
+                cell.setAttribute('data-tooltip', `${dateStr}: ${count} contributions`);
+                grid.appendChild(cell);
+            });
+
+            // Render Month Labels
+            let currentMonth = -1;
+            let weekIndex = 0;
+            
+            dateList.forEach((dateStr, index) => {
+                const date = new Date(dateStr);
+                const month = date.getMonth();
+                
+                if (date.getDay() === 0) {
+                    if (month !== currentMonth) {
+                        const label = document.createElement('span');
+                        label.textContent = date.toLocaleString('en-US', { month: 'short' });
+                        label.style.position = 'absolute';
+                        label.style.left = `${weekIndex * 13}px`;
+                        monthLabels.appendChild(label);
+                        currentMonth = month;
+                    }
+                    weekIndex++;
+                }
+            });
+        };
+
+        const fetchAndVisualize = async () => {
+            const input = npubInput.value.trim();
+            if (!input.startsWith('npub')) {
+                alert('有効なnpubを入力してください');
+                return;
+            }
+
+            // Reset UI
+            generateBtn.disabled = true;
+            loadingIcon.classList.remove('hidden');
+            statusMessage.textContent = '初期化中...';
+            profileSection.classList.add('hidden');
+            grid.innerHTML = ''; 
+
+            try {
+                // 1. Decode npub
+                const { data: pubkey } = nip19.decode(input);
+                statusMessage.textContent = '公開鍵を変換しました。リレーからイベントを取得中...';
+
+                // 2. Prepare Date Map
+                const { map: activityMap, dates, startDate } = generateDateMap();
+                const since = Math.floor(startDate.getTime() / 1000);
+
+                // 3. Fetch Metadata (Kind 0)
+                const metadata = await pool.get(RELAYS, {
+                    authors: [pubkey],
+                    kinds: [0]
+                });
+                
+                if (metadata) {
+                    const content = JSON.parse(metadata.content);
+                    profileName.textContent = content.display_name || content.name || 'No Name';
+                    profileImage.src = content.picture || 'https://via.placeholder.com/150?text=No+Img';
+                    profileImage.onerror = () => { profileImage.src = 'https://via.placeholder.com/150?text=Error'; };
+                    profileNpub.textContent = input.substring(0, 10) + '...' + input.substring(input.length - 10);
+                    profileSection.classList.remove('hidden');
+                }
+
+                // 4. Fetch Activities with Improved Pagination
+                statusMessage.textContent = `イベントを取得中... (Since: ${formatDate(startDate)})`;
+                
+                let allEvents = [];
+                // Fix: Start from 1 hour in the future to handle clock skews and ensure we get "now"
+                let until = Math.floor(Date.now() / 1000) + 3600;
+                
+                const seenIds = new Set();
+                const limit = 500; 
+                let keepFetching = true;
+
+                while (keepFetching) {
+                    statusMessage.textContent = `${allEvents.length}件のイベントを取得しました... 過去へ遡っています (${new Date(until * 1000).toLocaleDateString()})`;
+
+                    const events = await pool.querySync(RELAYS, {
+                        authors: [pubkey],
+                        kinds: [1, 6, 7, 42, 9735], 
+                        since: since,
+                        until: until,
+                        limit: limit
+                    });
+
+                    if (events.length === 0) {
+                        keepFetching = false;
+                        break;
+                    }
+
+                    let addedInThisBatch = 0;
+                    let minCreatedAt = events[0].created_at;
+
+                    events.forEach(event => {
+                        if (event.created_at < minCreatedAt) {
+                            minCreatedAt = event.created_at;
+                        }
+                        
+                        if (!seenIds.has(event.id)) {
+                            seenIds.add(event.id);
+                            allEvents.push(event);
+                            addedInThisBatch++;
+                        }
+                    });
+
+                    if (addedInThisBatch === 0) {
+                        // All events were duplicates. Force move back to avoid infinite loop.
+                        // This skips events that have the EXACT same timestamp as the previous boundary,
+                        // but it's necessary to progress.
+                        until = minCreatedAt - 1;
+                    } else {
+                        // Standard pagination: Move cursor to the oldest event found - 1
+                        // This ensures we don't fetch the same event again, but might miss concurrent events.
+                        // For a general visualizer, this is an acceptable trade-off for performance/stability.
+                        until = minCreatedAt - 1;
+                    }
+
+                    if (until < since) {
+                        keepFetching = false;
+                    }
+                    
+                    await new Promise(r => setTimeout(r, 20)); // Small delay for UI update
+                }
+
+                statusMessage.textContent = `${allEvents.length}件のイベントを取得しました。集計中...`;
+
+                // 5. Aggregate
+                let totalEvents = 0;
+                allEvents.forEach(event => {
+                    const date = new Date(event.created_at * 1000);
+                    const dateStr = formatDate(date); // Use local time date string
+                    
+                    if (activityMap.has(dateStr)) {
+                        activityMap.set(dateStr, activityMap.get(dateStr) + 1);
+                        totalEvents++;
+                    }
+                });
+
+                totalCountDisplay.textContent = totalEvents.toLocaleString();
+
+                // 6. Render
+                renderGrid(activityMap, dates);
+                statusMessage.textContent = `完了しました (Total: ${totalEvents})`;
+
+            } catch (error) {
+                console.error(error);
+                statusMessage.textContent = 'エラーが発生しました: ' + error.message;
+            } finally {
+                generateBtn.disabled = false;
+                loadingIcon.classList.add('hidden');
+            }
+        };
+
+        generateBtn.addEventListener('click', fetchAndVisualize);
+        
+        npubInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') fetchAndVisualize();
+        });
+        
+        const { map, dates } = generateDateMap();
+        renderGrid(map, dates);
+
+    </script>
+</body>
+</html>
